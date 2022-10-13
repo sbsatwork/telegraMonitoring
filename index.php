@@ -9,6 +9,7 @@ foreach ($urlsOfTelegramChannels as $urlToCheck) {
     //Reset variables
     $emailBody = "";
     $html = "";
+	$emailPriority = "Normal";
 
     // Open channel and get HTML
     $html = openURLandReturnHTML($urlToCheck);
@@ -49,7 +50,7 @@ function openURLandReturnHTML($urlOfTelegramChannelFunc){
 
 function buildDomAndCheckContent($htmlFunc){
 
-	global $makeTranslation, $deepLAuthKey, $deepLTargetLang, $emailBody;
+	global $makeTranslation, $deepLAuthKey, $deepLTargetLang, $emailBody, $emailPriority;
 
 	$dom = new DomDocument();
 	$dom->loadHTML($htmlFunc);
@@ -59,18 +60,28 @@ function buildDomAndCheckContent($htmlFunc){
 
     foreach ($nodes as $node) {
 
+		$nodePriority = "NORMAL";
+
         $nodeSender = $finder->evaluate('string(.//*[@class="tgme_widget_message_owner_name"][1])', $node);
         echo $nodeSender, '<br/>';
-        
+		
         $nodeContent = $finder->evaluate('string(.//*[@class="tgme_widget_message_text js-message_text"][1])', $node);
-        
+		$nodeContentBeforeTranslation = $nodeContent;
+
         if ($makeTranslation){
             $nodeContent = myTranslationFunc($nodeContent);
         }
+		
+		// check if the string is empty. this can be caused e.g., if the char-limit of deepl is reached or another error appeared.
+		// if so, set the text back to the original text from the channel withouth translation.
+		if ($nodeContent == ""){
+			$nodeContent = $nodeContentBeforeTranslation;
+		}
+
         $nodeContent = nl2br($nodeContent);
-        echo $nodeContent, '<br/>';
+		echo $nodeContent, '<br/>';
         
-        $photoContent = $finder->evaluate('string(.//*[@class="tgme_widget_message_photo_wrap"][1])', $node);
+        $photoContent = $finder->evaluate('string(.//*[@class="tgme_widget_message_photo_wrap"][1])', $node); // not yet working
         echo $photoContent, '<br/>'; // not yet working
 
         $nodeViews = $finder->evaluate('string(.//*[@class="tgme_widget_message_views"][1])', $node);
@@ -79,8 +90,16 @@ function buildDomAndCheckContent($htmlFunc){
         $nodeDate = $finder->evaluate('string(.//*[@class="tgme_widget_message_date"][1])', $node);
         echo $nodeDate, '<br/>';
 
+		if (checkMyKeywords($nodeContent)){
+			//keyword found - set an alarm
+			echo "--> KEYWORD FOUND <--";
+			$nodePriority = "HIGH";
+			$emailPriority = "HIGH";
+		}
+
         //Set infos for email body
-        $emailBody .= "Sender: ".$nodeSender."\n";
+        $emailBody .= "Priority: ".$nodePriority."\n";
+		$emailBody .= "Sender: ".$nodeSender."\n";
         $emailBody .= "Text: ".$nodeContent."\n";
         $emailBody .= "Views: ".$nodeViews."\n";
         $emailBody .= "Date: ".$nodeDate."\n\n";
@@ -119,11 +138,30 @@ function myTranslationFunc($textToTranslate) {
 	return $result;
 }
 
+function checkMyKeywords($stringToCheck){
+	global $keywords;
+	$keywordFound = false;
+	foreach ($keywords as $keyword) {
+
+		$myString = $stringToCheck;
+		$findMe   = $keyword;
+		$pos = strpos($myString, $findMe);
+		if ($pos !== false) {
+			$keywordFound = true;
+		}
+	}
+	return $keywordFound;
+}
+
 function sendEmailToRecipient($checkedURL) {
-	global $emailRecipient, $emailBody;
+	global $emailRecipient, $emailBody, $emailPriority, $emailHeader;
 	$emailBody .= "\n URL of Channel: ".$checkedURL;
-	$emailSubject = "Telegram Update on Channel ".$checkedURL;
-	mail($emailRecipient, $emailSubject, $emailBody);
-	echo "Email sent to: ".$emailRecipient." with subject".$emailSubject."<br/><br/><br/><hr/><br/><br/><br/>";
+	if ($emailPriority == "HIGH") {
+		$emailSubject = "IMPORTANT: Telegram Update on Channel ".$checkedURL;
+	}else{
+		$emailSubject = "Telegram Update on Channel ".$checkedURL;
+	}
+	mail($emailRecipient, $emailSubject, $emailBody, $emailHeader);
+	echo "Email sent to: ".$emailRecipient." with subject".$emailSubject."<br/>";
 }
 ?>
